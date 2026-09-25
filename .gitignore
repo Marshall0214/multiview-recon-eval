@@ -1,0 +1,9 @@
+# local environment (WSL disk image, downloads)
+env/
+# data and experiment outputs
+data/
+outputs/
+*.ply
+*.pt
+*.ckpt
+__pycache__/
