@@ -158,11 +158,12 @@ ABO 家具模型 ─► Blender Cycles 渲染（RGBA，200 个候选视角 + 60 
 
 ### 4.6 M0：环境复现（Mip-NeRF 360）
 
-| 场景 | 步数 | PSNR（本机 / gsplat 参考值） | SSIM | LPIPS |
-|---|---|---|---|---|
-| room | 7k | 29.93 / 29.21 | 0.909 / 0.893 | 0.191 / 0.217 |
+| 场景 | 步数 | PSNR（本机 / gsplat 参考值） | SSIM | LPIPS | 训练耗时 |
+|---|---|---|---|---|---|
+| room | 7k | 29.88 / 29.21 | 0.908 / 0.893 | 0.192 / 0.217 | 2.5 min |
+| room | 30k | 31.63 / 31.36 | 0.929 / 0.918 | 0.149 / 0.164 | 15.9 min |
 
-30k 步的结果及训练耗时见 [results/m0_mipnerf360.md](results/m0_mipnerf360.md)。
+本机指标全部达到或略高于 gsplat 的公开结果（参考值在 TITAN RTX 上测得），说明环境配置正确。详见 [results/m0_mipnerf360.md](results/m0_mipnerf360.md)。
 
 ### 4.7 Q4：真实数据流程
 
