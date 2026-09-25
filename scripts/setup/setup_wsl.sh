@@ -27,7 +27,7 @@ echo "== [1/5] apt packages"
 apt-get update -q
 apt-get install -y -q build-essential git wget curl ca-certificates unzip ffmpeg \
     python3.10 python3.10-venv python3.10-dev \
-    libgl1 libglib2.0-0 libegl1 libxrender1 libxi6 libxkbcommon0 libsm6
+    libgl1 libglib2.0-0 libegl1 libxrender1 libxi6 libxkbcommon0 libsm6 colmap
 
 echo "== [2/5] CUDA toolkit 12.4 (WSL repo: toolkit only, the driver comes from Windows)"
 if [ ! -x /usr/local/cuda-12.4/bin/nvcc ]; then

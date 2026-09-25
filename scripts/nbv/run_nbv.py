@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from mvr.data import load_scene  # noqa: E402
 from mvr.geom import load_gt_mesh, raycast_depth  # noqa: E402
 from mvr.gs import TrainConfig, render, train  # noqa: E402
+from mvr.infogain import gain_matrix, select_greedy  # noqa: E402
 from mvr.metrics import evaluate  # noqa: E402
 from mvr.signals import combined, score_views  # noqa: E402
 from mvr.views import initial_views, select_by_score, select_fps, select_random  # noqa: E402
@@ -32,7 +33,9 @@ def gt_depth_cache(scene):
     if not f.exists():
         d = raycast_depth(load_gt_mesh(scene.root / "mesh_gt.ply"), scene.c2w[ids], scene.K,
                           scene.width, scene.height)
-        np.save(f, d.astype(np.float16))
+        tmp = f.with_suffix(f".{np.random.randint(1 << 30)}.tmp.npy")  # parallel runs: write atomically
+        np.save(tmp, d.astype(np.float16))
+        tmp.replace(f)
     d = np.load(f).astype(np.float32)
     return {i: d[k] for k, i in enumerate(ids)}
 
@@ -59,7 +62,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--scene", required=True)
     p.add_argument("--init", choices=["uniform", "biased"], required=True)
-    p.add_argument("--strategy", choices=["random", "fps", "ours"], required=True)
+    p.add_argument("--strategy", choices=["random", "fps", "ours", "ig"], required=True)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--k", type=int, default=10)
     p.add_argument("--n", type=int, default=5)
@@ -90,18 +93,29 @@ def main():
             score = combined(sig)
             torch.cuda.synchronize()
             res["signal_s"] = time.time() - t0
+            extra = {}
+            if args.strategy == "ig":
+                t0 = time.time()
+                vis = gain_matrix(splats, scene, views, avail)
+                torch.cuda.synchronize()
+                res["ig_s"] = time.time() - t0
+                extra["IG"] = vis.sum(1).cpu().numpy()
             bad, psnr = true_errors(splats, scene, avail, gt_depth)
             np.savez(out / f"round{r}_candidates.npz", ids=np.array(avail),
                      S1=sig["S1"].cpu().numpy(), S2=sig["S2"].cpu().numpy(), score=score.cpu().numpy(),
-                     bad=bad, psnr=psnr)
+                     bad=bad, psnr=psnr, **extra)
             t0 = time.time()
             if args.strategy == "random":
                 new = select_random(avail, args.n, rng)
             elif args.strategy == "fps":
                 new = select_fps(scene, views, avail, args.n)
+            elif args.strategy == "ig":
+                picks, gains = select_greedy(vis, args.n)
+                new = [avail[j] for j in picks]
+                res["ig_gains"] = gains
             else:
                 new = select_by_score(scene, avail, score.cpu().numpy(), args.n)
-            res["select_s"] = time.time() - t0 + (res["signal_s"] if args.strategy == "ours" else 0)
+            res["select_s"] = time.time() - t0 + {"ours": res["signal_s"], "ig": res.get("ig_s", 0)}.get(args.strategy, 0)
             views = views + [int(v) for v in new]
 
         (out / f"round{r}.json").write_text(json.dumps(res, indent=1))
