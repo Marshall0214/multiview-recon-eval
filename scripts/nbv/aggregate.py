@@ -16,11 +16,11 @@ import pandas as pd  # noqa: E402
 from scipy.stats import spearmanr  # noqa: E402
 
 OBJECTS = {"B07J2YB486": "chair", "B07B82PXCW": "table", "B07HSCJZQM": "bookcase"}
-STRATS = ["ours", "fps", "random"]
-LABEL = {"ours": "S1+S2 (ours)", "fps": "FPS", "random": "Random"}
-# categorical slots 1-3 of the reference palette, validated (scripts/validate_palette.js, light)
-COLOR = {"ours": "#2a78d6", "fps": "#eb6834", "random": "#1baf7a"}
-MARKER = {"ours": "o", "fps": "s", "random": "^"}  # secondary encoding: identity is never colour alone
+STRATS = ["ours", "fps", "random", "ig"]
+LABEL = {"ours": "S1+S2 (v1)", "fps": "FPS", "random": "Random", "ig": "IG (v2)"}
+# categorical slots 1-4 of the reference palette, validated (scripts/validate_palette.js, light)
+COLOR = {"ours": "#2a78d6", "fps": "#eb6834", "random": "#1baf7a", "ig": "#eda100"}
+MARKER = {"ours": "o", "fps": "s", "random": "^", "ig": "D"}  # secondary encoding: identity is never colour alone
 INK, INK2, GRID, SURFACE = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
 
 
@@ -42,7 +42,9 @@ def load_correlations(runs):
         z = np.load(f)
         row = {"object": OBJECTS.get(obj, obj), "init": init, "strategy": strat, "seed": int(seed[4:]),
                "round": int(f.name[5:].split("_")[0])}
-        for s in ("S1", "S2", "score"):
+        for s in ("S1", "S2", "score", "IG"):
+            if s not in z:
+                continue
             row[f"{s}~bad"] = spearmanr(z[s], z["bad"])[0]
             row[f"{s}~psnr"] = spearmanr(z[s], z["psnr"])[0]
         rows.append(row)
@@ -58,6 +60,7 @@ def curves(df, metric, ylabel, path):
     for ax, init in zip(axes, ["biased", "uniform"]):
         ax.set_facecolor(SURFACE)
         sub = df[df.init == init]
+        ends = []
         for s in STRATS:
             g = sub[sub.strategy == s].groupby("n_views")[metric]
             if not len(g):
@@ -66,8 +69,20 @@ def curves(df, metric, ylabel, path):
             ax.fill_between(m.index, m - sd, m + sd, color=COLOR[s], alpha=0.12, linewidth=0)
             ax.plot(m.index, m.values, color=COLOR[s], lw=2, marker=MARKER[s], ms=6,
                     markeredgecolor=SURFACE, markeredgewidth=1.5, label=LABEL[s])
-            ax.annotate(LABEL[s], (m.index[-1], m.values[-1]), xytext=(6, 0), textcoords="offset points",
-                        va="center", fontsize=8, color=INK2)
+            ends.append([m.values[-1], m.index[-1], LABEL[s]])
+        # direct end labels, nudged apart vertically so they never overlap
+        lo, hi = ax.get_ylim()
+        gap = 0.06 * (hi - lo)
+        ends.sort()
+        orig_mean = np.mean([e[0] for e in ends]) if ends else 0
+        for k in range(1, len(ends)):
+            ends[k][0] = max(ends[k][0], ends[k - 1][0] + gap)
+        shift = orig_mean - np.mean([e[0] for e in ends]) if ends else 0  # re-centre the pushed stack
+        for e in ends:
+            e[0] += shift
+        for y, x, text in ends:
+            ax.annotate(text, (x, y), xytext=(6, 0), textcoords="offset points", va="center",
+                        fontsize=8, color=INK2, annotation_clip=False)
         ax.set_title(f"I-{init} initial views", fontsize=10, color=INK, loc="left")
         ax.set_xlabel("training views", color=INK2, fontsize=9)
         ax.grid(axis="y", color=GRID, lw=0.8)
@@ -111,7 +126,7 @@ def main():
                              f"{pm(g['precision@1%'])} | {pm(g['fscore@2%'])} | {g.psnr.mean():.2f} | {g.lpips.mean():.3f} |")
 
     lines += ["", "## Per object (final round, F@1%, mean over seeds)", "",
-              "| Init | Object | " + " | ".join(LABEL[s] for s in STRATS) + " |", "|---|---|---|---|---|"]
+              "| Init | Object | " + " | ".join(LABEL[s] for s in STRATS) + " |", "|---|---|" + "---|" * len(STRATS)]
     for init in ["biased", "uniform"]:
         for obj in OBJECTS.values():
             g = last[(last.init == init) & (last.object == obj)]
@@ -119,15 +134,29 @@ def main():
                 vals = [g[g.strategy == s]["fscore@1%"].mean() for s in STRATS]
                 lines.append(f"| I-{init} | {obj} | " + " | ".join(f"{v:.3f}" for v in vals) + " |")
 
+    lines += ["", "## F@1% per round (mean over objects × seeds) and mean over rescan rounds 1–4 (area-under-curve proxy)", "",
+              "| Init | Strategy | " + " | ".join(f"{int(n)} views" for n in sorted(df.n_views.unique())) + " | mean r1–4 |",
+              "|---|---|" + "---|" * (df.n_views.nunique() + 1)]
+    for init in ["biased", "uniform"]:
+        for s in STRATS:
+            g = df[(df.init == init) & (df.strategy == s)]
+            if len(g):
+                per = g.groupby("n_views")["fscore@1%"].mean()
+                auc = g[g["round"] > 0]["fscore@1%"].mean()
+                lines.append(f"| I-{init} | {LABEL[s]} | " + " | ".join(f"{v:.3f}" for v in per.values) + f" | {auc:.3f} |")
+    lines += ["", "IG (v2) was designed after the v1 failure analysis using the chair only; table and bookcase are held out for it.", ""]
+
     lines += ["", "## Q1: signal vs true error (Spearman ρ over remaining candidates, per round)", "",
               "`bad` = fraction of GT object pixels with depth error > 1% diag or alpha < 0.5 (higher = worse): "
               "a useful signal has **positive** ρ with bad and **negative** ρ with PSNR.", "",
               "| Init | Signal | ρ vs bad (mean ± std) | ρ vs PSNR (mean ± std) | n |", "|---|---|---|---|---|"]
     for init in ["biased", "uniform"]:
         c = corr[corr.init == init]
-        for s in ("S1", "S2", "score"):
-            name = {"score": "S1+S2"}.get(s, s)
-            lines.append(f"| I-{init} | {name} | {pm(c[f'{s}~bad'])} | {pm(c[f'{s}~psnr'])} | {len(c)} |")
+        for s in ("S1", "S2", "score", "IG"):
+            name = {"score": "S1+S2", "IG": "IG (v2)"}.get(s, s)
+            cc = c.dropna(subset=[f"{s}~bad"]) if f"{s}~bad" in c else c.iloc[:0]
+            if len(cc):
+                lines.append(f"| I-{init} | {name} | {pm(cc[f'{s}~bad'])} | {pm(cc[f'{s}~psnr'])} | {len(cc)} |")
 
     (args.out / "m2_summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
