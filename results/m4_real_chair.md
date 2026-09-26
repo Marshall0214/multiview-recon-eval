@@ -39,8 +39,28 @@ of a real room that the simulation did not have:
    the min-area rectangle axes, and picks the *largest* cluster near the orbit centre (with the debris
    removed, a small blob under the seat was otherwise the *nearest* one).
 
-Remaining depth error (+46 mm) — a possible, unverified cause: the backrest reclines, so from above it
-overhangs the legs; the automatic footprint includes it, a tape measurement at seat level would not.
+## Like-for-like comparison (measurement convention resolved)
+
+The "depth" gap (+46 mm) turned out to be a convention mismatch, confirmed with the person who measured:
+the tape depth (496 mm) was taken **front-to-back across the seat**, whereas the automatic depth is the
+whole footprint seen from above, which includes the reclined backrest overhanging the rear legs by ~7 cm.
+Per-height bands of the v2 cluster (mm; 1st–99th percentile extents along the footprint axes):
+
+| Band | Width | Depth | Front → back |
+|---|---|---|---|
+| legs 3–30 cm | 533 | 492 | −349 → +144 |
+| seat 30–45 cm | 525 | **485** | −339 → +146 |
+| armrests 45–70 cm | **573** | 512 | −330 → +182 |
+| backrest top > 70 cm | 524 | 82 | +131 → **+214** |
+
+| | Tape | Reconstruction (same convention) | Error |
+|---|---|---|---|
+| Height | 804 | 819 | +15 mm (+1.9%) |
+| Width (widest = armrests) | 584 | 573 | −11 mm (−1.9%) |
+| Depth (seat, front-to-back) | 496 | 485 | −11 mm (−2.2%) |
+
+Lesson: the capture protocol must define each dimension as something a tape can actually measure
+(the guide said "short side of the footprint", which nobody measures with a tape on a reclined chair).
 
 Honesty note: v2 was designed after seeing the real-chair errors, so it has only one real test object;
 the v1 numbers are the pre-registered result.
