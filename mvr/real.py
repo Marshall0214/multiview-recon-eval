@@ -110,12 +110,23 @@ def umeyama(src, dst):
 
 # ---------------------------------------------------------------- measurement
 
-def measure_furniture(points, cam_centers, floor_eps=0.015, cluster_eps=0.03):
+def measure_furniture(points, cam_centers, floor_eps=None, cluster_eps=0.03, version="v2"):
     """Metric points in the board frame (z up, floor z=0) -> height / width / depth (mm).
 
     Keeps points above the floor, clusters them, takes the biggest cluster nearest the orbit centre
     (the object the cameras circle), then measures a robust height and the minimum-area footprint.
+
+    v1 (pre-registered, fixed on the simulated capture): floor = RANSAC on points within 8 cm of the board
+       plane; points > 1.5 cm above it; footprint = min-area rectangle of all cluster points.
+    v2 (post-hoc, after the real chair on a glossy tiled floor): 3DGS reconstructs floor reflections as
+       geometry below the floor, which dragged v1's RANSAC floor ~3-5 cm down (height +50 mm), and
+       floor-level debris joined the legs (footprint +15 cm). v2 keeps the ArUco board plane as the floor
+       (RANSAC only within +-1 cm of it, 0.66 mm alignment RMS), drops points < 3 cm above it, and takes
+       the footprint extent between the 1st and 99th percentiles along the min-area rectangle axes.
     """
+    if floor_eps is None:
+        floor_eps = 0.015 if version == "v1" else 0.03
+    floor_band = 0.08 if version == "v1" else 0.01
     import open3d as o3d
 
     # 1. keep the volume inside the camera ring: 3DGS also models the far background, which TSDF fuses too
@@ -126,7 +137,7 @@ def measure_furniture(points, cam_centers, floor_eps=0.015, cluster_eps=0.03):
     pc = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points[keep])).voxel_down_sample(cluster_eps / 3)
 
     # 2. refine the floor: RANSAC plane on near-floor points (the A4 board only pins the floor locally)
-    near = pc.select_by_index(np.where(np.abs(np.asarray(pc.points)[:, 2]) < 0.08)[0])
+    near = pc.select_by_index(np.where(np.abs(np.asarray(pc.points)[:, 2]) < floor_band)[0])
     (a, b, c, d), _ = near.segment_plane(distance_threshold=0.005, ransac_n=3, num_iterations=2000)
     n = np.array([a, b, c]) * np.sign(c)
     d = d * np.sign(c)
@@ -147,12 +158,23 @@ def measure_furniture(points, cam_centers, floor_eps=0.015, cluster_eps=0.03):
         c = pts[labels == lab]
         if len(c) < 200:
             continue
-        key = (np.linalg.norm(np.median(c[:, :2], 0) - centre), -len(c))
+        dist = np.linalg.norm(np.median(c[:, :2], 0) - centre)
+        if version == "v1":
+            key = (dist, -len(c))                      # nearest cluster to the orbit centre
+        else:
+            if dist > 0.35 * ring:                     # largest cluster near the orbit centre: once floor
+                continue                               # debris is cut away it forms small central blobs
+            key = (-len(c),)
         if best_key is None or key < best_key:
             best, best_key = c, key
     if best is None:
         raise RuntimeError("no object cluster found above the floor")
     height = np.percentile(best[:, 2], 99.9)  # set on the simulated capture (dev set); thin top edges erode
-    (_, _), (w, d), _ = cv2.minAreaRect(best[:, :2].astype(np.float32))
+    (_, _), (w, d), ang = cv2.minAreaRect(best[:, :2].astype(np.float32))
+    if version != "v1":  # robust extents along the rectangle axes
+        a = np.radians(ang)
+        axes = np.array([[np.cos(a), np.sin(a)], [-np.sin(a), np.cos(a)]])
+        q = best[:, :2] @ axes.T
+        w, d = (np.percentile(q, 99, 0) - np.percentile(q, 1, 0)).tolist()
     w, d = max(w, d), min(w, d)
     return {"height": height * 1000, "width": w * 1000, "depth": d * 1000, "n_points": len(best)}, best

@@ -50,11 +50,11 @@ def crop_down(pcd, vol, method, voxel=0.01, trans=np.eye(4)):
     return p
 
 
-def icp(src, tgt, init, vol, thr, max_itr, voxel=None):
+def icp(src, tgt, init, vol, thr, max_itr, voxel=None, with_scale=True):
     method = "voxel" if voxel else "uniform"
     s = crop_down(src, vol, method, voxel, init)
     t = crop_down(tgt, vol, method, voxel)
-    r = reg.registration_icp(s, t, thr, np.eye(4), reg.TransformationEstimationPointToPoint(True),
+    r = reg.registration_icp(s, t, thr, np.eye(4), reg.TransformationEstimationPointToPoint(with_scale),
                              reg.ICPConvergenceCriteria(1e-6, max_itr))
     return r.transformation @ init
 
@@ -65,6 +65,9 @@ def main():
     p.add_argument("--ply", type=Path, required=True)
     p.add_argument("--log", type=Path, required=True)
     p.add_argument("--out", type=Path, default=None)
+    p.add_argument("--rigid_icp", action="store_true",
+                   help="keep the trajectory-alignment scale; refine rotation/translation only. The official ICP "
+                        "also optimises scale, which floaters in a 3DGS cloud can drag (3.5%% on Meetingroom).")
     a = p.parse_args()
     scene = a.gt_dir.name
     tau = TAU[scene]
@@ -84,9 +87,10 @@ def main():
         src, tgt, corres, 0.2, reg.TransformationEstimationPointToPoint(True), 6, [],
         reg.RANSACConvergenceCriteria(100000, 0.999)).transformation
 
-    T = icp(pcd, gt, rough, vol, tau * 80, 20, voxel=tau)
-    T = icp(pcd, gt, T, vol, tau * 20, 20, voxel=tau / 2)
-    T = icp(pcd, gt, T, vol, 2 * tau, 20)
+    ws = not a.rigid_icp
+    T = icp(pcd, gt, rough, vol, tau * 80, 20, voxel=tau, with_scale=ws)
+    T = icp(pcd, gt, T, vol, tau * 20, 20, voxel=tau / 2, with_scale=ws)
+    T = icp(pcd, gt, T, vol, 2 * tau, 20, with_scale=ws)
 
     s = copy.deepcopy(pcd)
     s.transform(T)
@@ -95,9 +99,15 @@ def main():
     d1 = np.asarray(s.compute_point_cloud_distance(t))
     d2 = np.asarray(t.compute_point_cloud_distance(s))
     prec, rec = float((d1 < tau).mean()), float((d2 < tau).mean())
-    res = {"scene": scene, "tau_m": tau, "frames_matched": len(common), "frames_reference": len(ref),
+    rough_scale = float(np.cbrt(np.linalg.det(rough[:3, :3])))
+    res = {"scene": scene, "tau_m": tau, "icp": "rigid" if a.rigid_icp else "similarity (official)",
+           "scale_from_trajectory": rough_scale, "frames_matched": len(common), "frames_reference": len(ref),
            "precision": prec, "recall": rec, "fscore": 2 * prec * rec / (prec + rec) if prec + rec else 0.0,
-           "scale_to_gt": float(np.cbrt(np.linalg.det(T[:3, :3])))}
+           "scale_to_gt": float(np.cbrt(np.linalg.det(T[:3, :3]))),
+           "median_recon_to_gt_m": float(np.median(d1)), "median_gt_to_recon_m": float(np.median(d2)),
+           "n_recon_pts_cropped": len(d1), "n_gt_pts_cropped": len(d2),
+           "rough_vs_final_shift_m": float(np.linalg.norm((T - rough)[:3, 3])),
+           "transform": T.tolist()}
     print(json.dumps(res, indent=1))
     if a.out:
         a.out.write_text(json.dumps(res, indent=1))

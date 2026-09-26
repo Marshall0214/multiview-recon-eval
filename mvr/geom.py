@@ -29,12 +29,18 @@ def raycast_depth(mesh, c2w, K, width, height):
 
 def tsdf_fuse(depths, rgbs, c2w, K, width, height, voxel, trunc_mult=4.0, max_depth=100.0):
     """Fuse z-depth maps [V,H,W] (0 or inf = invalid) into a triangle mesh."""
+    return tsdf_fuse_stream(zip(depths, rgbs, c2w), K, width, height, voxel, trunc_mult, max_depth)
+
+
+def tsdf_fuse_stream(frames, K, width, height, voxel, trunc_mult=4.0, max_depth=100.0):
+    """Like tsdf_fuse, but `frames` yields (depth, rgb, c2w) one at a time, so memory does not grow with
+    the number of views (371 full-HD frames of a T&T scene do not fit in RAM at once)."""
     vol = o3d.pipelines.integration.ScalableTSDFVolume(
         voxel_length=voxel, sdf_trunc=trunc_mult * voxel,
         color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8)
     intr = o3d.camera.PinholeCameraIntrinsic(width, height, float(K[0, 0]), float(K[1, 1]),
                                              float(K[0, 2]), float(K[1, 2]))
-    for d, c, M in zip(depths, rgbs, c2w):
+    for d, c, M in frames:
         d = np.where(np.isfinite(d), d, 0).astype(np.float32)
         rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
             o3d.geometry.Image(np.ascontiguousarray((c * 255).astype(np.uint8))),

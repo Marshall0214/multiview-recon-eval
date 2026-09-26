@@ -18,7 +18,7 @@ import torch
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
-from mvr.geom import tsdf_fuse  # noqa: E402
+from mvr.geom import tsdf_fuse_stream  # noqa: E402
 from mvr.gs import render  # noqa: E402
 from mvr.real import board_points, detect, measure_furniture, read_colmap_text, triangulate, umeyama  # noqa: E402
 
@@ -96,20 +96,19 @@ def train_gsplat(undist, out, steps):
 @torch.no_grad()
 def fuse(splats, cams, images, voxel, max_depth, stride=2):
     splats = {k: v.cuda() for k, v in splats.items()}
-    depths, rgbs, c2ws = [], [], []
-    K0 = None
-    for im in images[::stride]:
-        cam = cams[im["cam"]]
-        K = torch.tensor(cam["K"], dtype=torch.float32, device="cuda")
-        vm = torch.tensor(im["w2c"], dtype=torch.float32, device="cuda")[None]
-        rgb, alpha, depth, _ = render(splats, vm, K, cam["w"], cam["h"], bg=torch.ones(1, 3, device="cuda"))
-        d = depth[0].clone()
-        d[alpha[0] < 0.5] = 0
-        depths.append(d.cpu().numpy())
-        rgbs.append(rgb[0].clamp(0, 1).cpu().numpy())
-        c2ws.append(np.linalg.inv(im["w2c"]))
-        K0 = cam
-    return tsdf_fuse(depths, rgbs, np.array(c2ws), K0["K"], K0["w"], K0["h"], voxel, max_depth=max_depth)
+
+    def frames():  # render one view at a time and hand it straight to the TSDF
+        for im in images[::stride]:
+            cam = cams[im["cam"]]
+            K = torch.tensor(cam["K"], dtype=torch.float32, device="cuda")
+            vm = torch.tensor(im["w2c"], dtype=torch.float32, device="cuda")[None]
+            rgb, alpha, depth, _ = render(splats, vm, K, cam["w"], cam["h"], bg=torch.ones(1, 3, device="cuda"))
+            d = depth[0].clone()
+            d[alpha[0] < 0.5] = 0
+            yield d.cpu().numpy(), rgb[0].clamp(0, 1).cpu().numpy(), np.linalg.inv(im["w2c"])
+
+    cam0 = cams[images[0]["cam"]]  # single shared camera (COLMAP single_camera + undistortion)
+    return tsdf_fuse_stream(frames(), cam0["K"], cam0["w"], cam0["h"], voxel, max_depth=max_depth)
 
 
 def main():
