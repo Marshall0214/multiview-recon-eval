@@ -65,6 +65,10 @@ def main():
     p.add_argument("--ply", type=Path, required=True)
     p.add_argument("--log", type=Path, required=True)
     p.add_argument("--out", type=Path, default=None)
+    p.add_argument("--pre_voxel", action="store_true",
+                   help="voxel-downsample both clouds to tau/2 at load. The final P/R/F step downsamples to tau/2 "
+                        "anyway, so the metric is unchanged; only the ICP inputs get sparser. Needed for noisy 3DGS "
+                        "clouds (91M points on Meetingroom: the unmodified pipeline ran > 1.5 h without finishing).")
     p.add_argument("--rigid_icp", action="store_true",
                    help="keep the trajectory-alignment scale; refine rotation/translation only. The official ICP "
                         "also optimises scale, which floaters in a 3DGS cloud can drag (3.5%% on Meetingroom).")
@@ -74,6 +78,9 @@ def main():
 
     pcd = o3d.io.read_point_cloud(str(a.ply))
     gt = o3d.io.read_point_cloud(str(a.gt_dir / f"{scene}.ply"))
+    if a.pre_voxel:
+        pcd, gt = pcd.voxel_down_sample(tau / 2), gt.voxel_down_sample(tau / 2)
+        print(f"pre-voxel {tau / 2} m: recon {len(pcd.points)} pts, gt {len(gt.points)} pts", flush=True)
     gt_trans = np.loadtxt(a.gt_dir / f"{scene}_trans.txt")
     vol = o3d.visualization.read_selection_polygon_volume(str(a.gt_dir / f"{scene}.json"))
 
