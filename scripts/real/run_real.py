@@ -28,7 +28,7 @@ def sh(*cmd):
     subprocess.run(list(map(str, cmd)), check=True, stdout=subprocess.DEVNULL)
 
 
-def run_colmap(images, work, max_size):
+def run_colmap(images, work, max_size, matcher="exhaustive"):
     db, sparse, undist = work / "db.db", work / "sparse", work / "undist"
     if (undist / "sparse" / "0").exists():
         return undist
@@ -36,7 +36,11 @@ def run_colmap(images, work, max_size):
     sh("colmap", "feature_extractor", "--database_path", db, "--image_path", images,
        "--ImageReader.single_camera", 1, "--ImageReader.camera_model", "OPENCV",
        "--SiftExtraction.use_gpu", 0, "--SiftExtraction.max_image_size", max_size)
-    sh("colmap", "exhaustive_matcher", "--database_path", db, "--SiftMatching.use_gpu", 0)
+    if matcher == "sequential":  # ordered video frames
+        sh("colmap", "sequential_matcher", "--database_path", db, "--SiftMatching.use_gpu", 0,
+           "--SequentialMatching.overlap", 20)
+    else:
+        sh("colmap", "exhaustive_matcher", "--database_path", db, "--SiftMatching.use_gpu", 0)
     sh("colmap", "mapper", "--database_path", db, "--image_path", images, "--output_path", sparse)
     models = sorted(sparse.iterdir(), key=lambda p: -sum(1 for _ in p.iterdir()))
     sh("colmap", "image_undistorter", "--image_path", images, "--input_path", models[0],
@@ -117,6 +121,10 @@ def main():
     args = p.parse_args()
 
     meas = json.loads((args.data / "measurements.json").read_text())
+    if "board_width_mm" in meas:  # tape measure: whole pattern (3 markers + 2 gaps = 170 mm, 4 + 3 = 230 mm)
+        ratios = [meas["board_width_mm"] / 170.0] + ([meas["board_height_mm"] / 230.0] if "board_height_mm" in meas else [])
+        meas["marker_mm"] = 50.0 * float(np.mean(ratios))
+        print(f"marker size from board span: {meas['marker_mm']:.2f} mm")
     work = args.data / "work"
     undist = run_colmap(args.data / "images", work, args.max_size)
     sim3, cams, images = align_to_board(undist, meas["marker_mm"])
