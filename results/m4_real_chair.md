@@ -64,3 +64,33 @@ Lesson: the capture protocol must define each dimension as something a tape can 
 
 Honesty note: v2 was designed after seeing the real-chair errors, so it has only one real test object;
 the v1 numbers are the pre-registered result.
+
+## Detailed tape protocol (second measurement session, 10 dimensions)
+
+The dimensions were re-measured following an explicit tape protocol (docs/capture_guide.md): heights with
+a book laid on the top, widths/depths outer-to-outer, overall depth and backrest overhang with the backrest
+touching a wall. Note the backrest top is curved: 829 mm at the side posts, 804 mm in the middle; `height`
+is the highest point (829), which is also what the reconstruction measures.
+
+`scripts/real/measure_detail.py` measures the same definitions on the v2 cluster (1st–99th percentile
+extents, nothing tuned to the tape values). Two sampling seeds:
+
+| Dimension | Tape (mm) | Recon seed 0 | Recon seed 1 | Error (seed 0) |
+|---|---|---|---|---|
+| height (side posts) | 829 | 817 | 816 | −12 (−1.4%) |
+| seat_height | 395 | 399 | 398 | +4 (+1.1%) |
+| armrest_height | 638 | 635 | 634 | −3 (−0.4%) |
+| width_armrest | 585 | 572 | 572 | −13 (−2.2%) |
+| width_front_legs | 518 | 529 | 529 | +11 (+2.1%) |
+| width_seat | 521 | 523 | 523 | +2 (+0.3%) |
+| depth_seat | 496 | 487 | 487 | −9 (−1.7%) |
+| depth_legs | 478 | 494 | 493 | +16 (+3.3%) |
+| overall_depth | 563 | 548 | 547 | −15 (−2.7%) |
+| backrest_overhang | 76 | 66 | 65 | −10 |
+
+**Mean |error| 9.4 mm, median 10.4 mm, max 16 mm over 10 dimensions** (seed 1: 9.6 / 10.9 / 16.0).
+
+Process note: the first version of `measure_detail.py` picked the depth axis from the backrest-vs-legs
+median offset; the few, unevenly sampled leg points made it choose the wrong axis (absurd output such as
+seat width 62 mm). It now uses the fact that the backrest is a thin plate (smallest extent along depth).
+That was a bug fix; no thresholds or percentiles were changed.
